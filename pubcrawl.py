@@ -84,10 +84,11 @@ def pubmedSearch(term1, term2, retryCount = 0):
 	batchSize = 10
 	outName = prefix + '_'.join((term1 + '_' + term2).split(' ')) + ".compiled" 
 
-	output = [outName, '']
+	output = ''
 	for start in range(0,count, batchSize):
 		end = min(count, start+batchSize)
 		print("Going to download record %i to %i" % (start+1, end))
+		print(term1, term2)
 		try:
 			fetch_handle = Entrez.efetch(db = "pubmed",
 											rettype = "medline", retmode= "text",
@@ -117,9 +118,10 @@ def pubmedSearch(term1, term2, retryCount = 0):
 		data = "\n".join(data)
 
 		
-		output[1]+= data + '\n'
+		output+= data + '\n'
 		sleep(0.5)
-	return output
+	with open(outName, 'w') as f:
+		f.write(output)
 
 with open(target) as f:
 	lst = []
@@ -130,8 +132,8 @@ pool = multiprocessing.Pool(cores)
 mappedRuns = pool.starmap(pubmedSearch, lst)
 #[[output name and path, [TIABTIABTIABTIAB]], <SAME>]
 
-for i in mappedRuns:
-	with open(i[0], 'w') as f:
-		f.write(i[1])
+# for i in mappedRuns:
+# 	with open(i[0], 'w') as f:
+# 		f.write(i[1])
 
 
