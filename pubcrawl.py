@@ -14,17 +14,19 @@ from time import strftime, sleep
 import os
 import sys
 from urllib.error import HTTPError
-
+import multiprocessing
 ####################
 #USER SET VARIABLES#
 ####################
 
 terms = ["TI", "AB"]
-
+cores = 10
 
 
 target = sys.argv[1]
 prefix = "output/" + strftime("%Y-%m-%d-%H_%M") + "/"
+if not os.path.exists(prefix):
+	os.makedirs(prefix)
 
 #grabs specified terms from from each article
 def grabTerm(medline, terms):
@@ -81,9 +83,8 @@ def pubmedSearch(term1, term2, retryCount = 0):
 	count = int(record["Count"])
 	batchSize = 10
 	outName = prefix + '_'.join((term1 + '_' + term2).split(' ')) + ".compiled" 
-	if not os.path.exists(prefix):
-		os.makedirs(prefix)
-	output = open(outName, 'w')
+
+	output = [outName, '']
 	for start in range(0,count, batchSize):
 		end = min(count, start+batchSize)
 		print("Going to download record %i to %i" % (start+1, end))
@@ -93,6 +94,8 @@ def pubmedSearch(term1, term2, retryCount = 0):
 											retstart = start, retmax = batchSize,
 											webenv = record["WebEnv"], query_key = record["QueryKey"] 
 											)
+		except:
+			raise
 		#may create false entries
 		# except HTTPError:
 		# 	print("ERROR")
@@ -114,15 +117,21 @@ def pubmedSearch(term1, term2, retryCount = 0):
 		data = "\n".join(data)
 
 		
-		output.write(data + '\n')
-		sleep(1)
-	output.close()
+		output[1]+= data + '\n'
+		sleep(0.5)
+	return output
 
 with open(target) as f:
-	lst = [i.split('\t') for i in f.read().split('\n')]
+	lst = []
+	for i in f:
+		lst.append(i.strip().split('\t'))
+pool = multiprocessing.Pool(cores)
 
-for i in lst:
-	pubmedSearch(i[0], i[1])
-	
+mappedRuns = pool.starmap(pubmedSearch, lst)
+#[[output name and path, [TIABTIABTIABTIAB]], <SAME>]
+
+for i in mappedRuns:
+	with open(i[0], 'w') as f:
+		f.write(i[1])
 
 
