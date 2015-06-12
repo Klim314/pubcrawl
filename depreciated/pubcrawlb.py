@@ -14,19 +14,17 @@ from time import strftime, sleep
 import os
 import sys
 from urllib.error import HTTPError
-import multiprocessing
+
 ####################
 #USER SET VARIABLES#
 ####################
 
 terms = ["TI", "AB"]
-cores = 20
+
 
 
 target = sys.argv[1]
 prefix = "output/" + strftime("%Y-%m-%d-%H_%M") + "/"
-if not os.path.exists(prefix):
-	os.makedirs(prefix)
 
 #grabs specified terms from from each article
 def grabTerm(medline, terms):
@@ -78,34 +76,23 @@ def preProc(data):
 def pubmedSearch(term1, term2, retryCount = 0):
 	query = ' '.join([term1, "AND", term2])
 	Entrez.email = "kmklim@gis.a-star.edu.sg"
-	try:
-		handle = Entrez.esearch(db = "pubmed", term = query , usehistory = "y")	
-		record = Entrez.read(handle)
-	except:
-		if retryCount <3:
-			pubmedSearch(term1, term2, retryCount +1)
-		else:
-			print("ERROR#" + query + " FAILED TO DOWNLOAD")
+	handle = Entrez.esearch(db = "pubmed", term = query , usehistory = "y")	
+	record = Entrez.read(handle)
 	count = int(record["Count"])
 	batchSize = 10
-	outName = prefix + '_'.join((term1 + '#' + term2).split(' ')) + ".compiled" 
-
-	output = ''
+	outName = prefix + '_'.join((term1 + '_' + term2).split(' ')) + ".compiled" 
+	if not os.path.exists(prefix):
+		os.makedirs(prefix)
+	output = open(outName, 'w')
 	for start in range(0,count, batchSize):
 		end = min(count, start+batchSize)
 		print("Going to download record %i to %i" % (start+1, end))
-		print(term1, term2)
 		try:
 			fetch_handle = Entrez.efetch(db = "pubmed",
 											rettype = "medline", retmode= "text",
 											retstart = start, retmax = batchSize,
 											webenv = record["WebEnv"], query_key = record["QueryKey"] 
 											)
-		except:
-			if retrycount < 3:
-				pubmedSearch(term1, term2, retryCount + 1)
-			else:
-				print("#ERROR#"+ query+ "FAILED TO DOWNLOAD")
 		#may create false entries
 		# except HTTPError:
 		# 	print("ERROR")
@@ -127,24 +114,15 @@ def pubmedSearch(term1, term2, retryCount = 0):
 		data = "\n".join(data)
 
 		
-		output+= data + '\n'
-		sleep(0.5)
-	with open(outName, 'w') as f:
-		f.write(output)
+		output.write(data + '\n')
+		sleep(1)
+	output.close()
 
-if __name__ == "__main__":
+with open(target) as f:
+	lst = [i.split('\t') for i in f.read().split('\n')]
 
-	with open(target) as f:
-		lst = []
-		for i in f:
-			lst.append(i.strip().split('\t'))
-	pool = multiprocessing.Pool(cores)
-
-	mappedRuns = pool.starmap(pubmedSearch, lst)
-#[[output name and path, [TIABTIABTIABTIAB]], <SAME>]
-
-# for i in mappedRuns:
-# 	with open(i[0], 'w') as f:
-# 		f.write(i[1])
+for i in lst:
+	pubmedSearch(i[0], i[1])
+	
 
 
