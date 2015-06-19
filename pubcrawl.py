@@ -1,96 +1,98 @@
 #!/usr/bin/env python3
-# Takes in a tsv consisting of multiple lines of TSV'd terms. Searches an "AND" joined result and collects abstracts and Titles
-# ./pubcrawl.py <FILENAME>
-# current bugs:
-# grabterm may bug up if repeated entries present
-# AB  -
-# AB  -
-# TODO: Modify for dynamic inputs in CLI
+"""
+*pubcrawl.py
+	Workhorse script of the pubcrawl package. Takes in a TSV of word 2-pairs. Searches Pubmed for "AND"-joined results and downloads abstracts and Titles.
+	Abstracts and titles are saved with a prepended 5 character identifier tag
+	Downloaded papers are stored in files named after the terms in the following format:
+	SPECIES_1#SPECIES_2.compiled
+"""
 
 
 from Bio import Entrez, Medline
-
 from time import strftime, sleep
 import os
-import sys
 from urllib.error import HTTPError
 import multiprocessing
+import argparse
+import re
+
 ####################
-#USER SET VARIABLES#
+# FIXED VARIABLES  #
 ####################
+terms = ["PMID", "TI  ", "AB  "]
+Entrez.email = "kmklim@gis.a-star.edu.sg"
+searcher = re.compile("(^(?:" + "|".join(terms) +  ").*\n(?:[ \t]+.*\n)*)", flags =re.M)
 
-terms = ["TI", "AB"]
-cores = 20
+
+#/////////////#
+#    CHECKS   #
+#/////////////#
+
+if not Entrez.email:
+	print("NO EMAIL DETECTED")
+	raise
+
+class medExtract():
+	def __init__(self, rawPaper):
+		self.data = {i: i for i in terms}
+		for chunk in rawPaper:
+			for term in terms:
+				if chunk.startswith(term):
+					self.data[term] = chunk
+
+	def export(self):
+		holder = [self.data[i] for i in terms]
+		return "".join([self.checkEnd(i) for i in holder])
+
+	def checkEnd(self, line):
+		if line[-1] == '\n':
+			return line
+		return line + '\n'
 
 
-target = sys.argv[1]
-prefix = "output/" + strftime("%Y-%m-%d-%H_%M") + "/"
-if not os.path.exists(prefix):
-	os.makedirs(prefix)
+"""
+grabTerm
+	Takes in string in the MEDLINE format containing all acquired papers and a list of terms to extract.
 
-#grabs specified terms from from each article
+	returns a list of medExtract objects
+
+	Note:
+		The first term determines breakpoints for data separation.
+"""
 def grabTerm(medline, terms):
-    #list of grabbable terms
-    #First (Start) term determines breakpoints for categorization
-    #ALL ENTRIES MUST HAVE A UNIQUE START TERM
-    terms =[i + (4-len(i)) * ' ' for i in terms]
-    #output variables
-    holder = []
-    res = []
+	result = []
+	holder =  [i for i in medline.split('\n\n')]
+	holder = [searcher.findall(i) for i in holder]
+	holder = [[" ".join(chunk.split("\n      ")) for chunk in paper]for paper in holder]
+	for paper in holder:
+		result.append(medExtract(paper))
+	return result
+	
+"""
+pubmedSearch
+	Main search function. Searches the terms and feeds the result into grabTerm
 
-    curIndex = 0
-    flag = -1
-    termDict = dict([(j, i) for i, j in enumerate(terms)])
-    #print(terms)
-    while curIndex != len(medline):
-        whole = medline[curIndex]
-        cur = whole[:4]
-        #very start or start of a new entry
-        if cur == terms[0]:
-            if holder != []:
-                res.append(holder)
-                holder = []
-            holder.append(whole)
-            #flag to add all tabbed lines after this    
-            flag = termDict[cur]
-        
-        elif cur in terms:
-            holder.append(whole)
-            flag = termDict[cur]
-
-        curIndex +=1 
-
-        #grab all tabbed lines belonging to the flagged line
-        if flag != -1 and medline[curIndex] != '':
-            while medline[curIndex][0] == ' ':
-                #print(medline[curIndex])
-                holder[flag] += ' ' + medline[curIndex].strip()
-                curIndex+=1
-            flag = -1
-
-    res.append(holder)
-    return res
-
-
-def preProc(data):
-	return data.split('\n')
-
-def pubmedSearch(term1, term2, retryCount = 0):
+	Outputs all title-abstract pairs into files.
+"""
+def pubmedSearch(term1, term2, outDir, retryCount = 0):
 	query = ' '.join([term1, "AND", term2])
-	Entrez.email = "kmklim@gis.a-star.edu.sg"
+
 	try:
 		handle = Entrez.esearch(db = "pubmed", term = query , usehistory = "y")	
 		record = Entrez.read(handle)
 	except:
 		if retryCount <3:
-			pubmedSearch(term1, term2, retryCount +1)
+			return pubmedSearch(term1, term2, retryCount +1)
 		else:
 			print("ERROR#" + query + " FAILED TO DOWNLOAD")
+	
+
 	count = int(record["Count"])
 	batchSize = 10
-	outName = prefix + '_'.join((term1 + '#' + term2).split(' ')) + ".compiled" 
+	outName = outDir+'_'.join((term1 + '#' + term2).split(' ')) + ".compiled" 
+	holder = []
 
-	output = ''
+	#download the papers
 	for start in range(0,count, batchSize):
 		end = min(count, start+batchSize)
 		print("Going to download record %i to %i" % (start+1, end))
@@ -102,49 +104,35 @@ def pubmedSearch(term1, term2, retryCount = 0):
 											webenv = record["WebEnv"], query_key = record["QueryKey"] 
 											)
 		except:
-			if retrycount < 3:
-				pubmedSearch(term1, term2, retryCount + 1)
+			if retryCount < 3:
+				return pubmedSearch(term1, term2, retryCount + 1)
 			else:
 				print("#ERROR#"+ query+ "FAILED TO DOWNLOAD")
-		#may create false entries
-		# except HTTPError:
-		# 	print("ERROR")
-		# 	print("retrying, try: ", count)
-		# 	print("searching : ", term1, " | ", term2)
-		# 	if retryCount <3:
-		# 		return pubmedSearch(term1, term2, retryCount+1)
-		# 	else:
-		# 		raise
 
 		#Stepwise Raw data preprocessing
 		data = fetch_handle.read()
-		data = preProc(data)
 		data = grabTerm(data, terms)
-		
 		fetch_handle.close()
-		data = sum(data, [])
-	
-		data = "\n".join(data)
-
-		
-		output+= data + '\n'
+		holder.extend(data)
 		sleep(0.5)
 	with open(outName, 'w') as f:
-		f.write(output)
+		for i in holder:
+			f.write(i.export())
 
 if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+	parser.add_argument( "target", help ="Target file. File must be a line-separated list of tab separated term pairs. eg: Escherichia coli  Pseudomonas aeruginosa")
+	parser.add_argument( "-c", "--cores", help ="number of cores", default = 4, type = int)
+	parser.add_argument("-o", "--outdir", help ="Choose output directory. Default = output/pubcrawl/", default = "output/pubcrawl/")
+	args = parser.parse_args()
 
-	with open(target) as f:
-		lst = []
-		for i in f:
-			lst.append(i.strip().split('\t'))
-	pool = multiprocessing.Pool(cores)
+	args.outdir = args.outdir + strftime("%Y-%m-%d-%H_%M") + "/"
+	if not os.path.exists(args.outdir):
+		os.makedirs(args.outdir)
 
-	mappedRuns = pool.starmap(pubmedSearch, lst)
-#[[output name and path, [TIABTIABTIABTIAB]], <SAME>]
+	with open(args.target) as f:
+		pairIn = [i.strip().split('\t') + [args.outdir] for i in f if i != '\n']
 
-# for i in mappedRuns:
-# 	with open(i[0], 'w') as f:
-# 		f.write(i[1])
-
-
+	pool = multiprocessing.Pool(args.cores)
+	mappedRuns = pool.starmap(pubmedSearch, pairIn)	
+		
